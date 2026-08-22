@@ -1,0 +1,272 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// 全局配置：AI 后端 + TTS 语音通道。
+class AppConfig {
+  // ---- AI 后端 ----
+  String provider; // 'deepseek' | 'openai' | 'ollama' | 'operit'
+  String baseUrl; // OpenAI 兼容接口地址，或 Operit 外部 HTTP 服务地址
+  String apiKey; // OpenAI API Key，或 Operit Bearer Token
+  String model; // Operit 模式下由 Operit 自己管理
+
+  String reasoningEffort; // 'off' | 'low' | 'medium' | 'high'，思考/推理强度，默认 low
+  double temperature;
+  int maxTokens;
+  String? systemPromptOverride; // 为空则使用角色自带人设
+
+  // ---- 主动消息 ----
+  int idleMinutes; // 闲置多少分钟后 AI 主动发消息（前台），默认 20
+  bool backgroundProactive; // 是否在后台/锁屏也触发（WorkManager），默认 false
+
+  // ---- TTS ----
+  bool ttsEnabled;
+  String ttsProvider; // 'local' | 'online'
+  String onlineTtsUrl; // 在线 TTS 端点（VOICEVOX / OpenAI TTS 等）
+  String onlineTtsKey;
+  String onlineTtsVoice; // 在线日语语音标识
+  String ttsLang; // 本地语音语言，如 ja-JP / zh-CN
+  double ttsRate;
+  double ttsPitch;
+  bool ttsJapanese; // 是否用日语播报
+
+  static const String deepseekBase = 'https://api.deepseek.com';
+  static const String openaiBase = 'https://api.openai.com/v1';
+  static const String ollamaBase = 'http://localhost:11434/v1';
+  static const String operitBase = 'http://127.0.0.1:8094';
+
+  AppConfig({
+    this.provider = 'deepseek',
+    this.baseUrl = deepseekBase,
+    this.apiKey = '',
+    this.model = 'deepseek-chat',
+    this.reasoningEffort = 'low',
+    this.temperature = 0.85,
+    this.maxTokens = 800,
+    this.systemPromptOverride,
+    this.idleMinutes = 20,
+    this.backgroundProactive = false,
+    this.ttsEnabled = false,
+    this.ttsProvider = 'local',
+    this.onlineTtsUrl = '',
+    this.onlineTtsKey = '',
+    this.onlineTtsVoice = '1',
+    this.ttsLang = 'ja-JP',
+    this.ttsRate = 0.5,
+    this.ttsPitch = 1.0,
+    this.ttsJapanese = true,
+  });
+
+  /// 用于 chat/completions 的实际地址。
+  String get chatBaseUrl {
+    final b = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    if (b.endsWith('/chat/completions') || b.endsWith('/v1')) return b;
+    return '$b/chat/completions';
+  }
+
+  /// Operit 外部 HTTP 服务的根地址。允许用户粘贴完整 API 地址。
+  String get operitBaseUrl {
+    var b = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    for (final suffix in const ['/api/external-chat', '/api/health', '/api']) {
+      if (b.endsWith(suffix)) {
+        b = b.substring(0, b.length - suffix.length);
+        break;
+      }
+    }
+    return b;
+  }
+
+  String get operitChatUrl => '${operitBaseUrl}/api/external-chat';
+  String get operitHealthUrl => '${operitBaseUrl}/api/health';
+
+  AppConfig copyWith({
+    String? provider,
+    String? baseUrl,
+    String? apiKey,
+    String? model,
+    String? reasoningEffort,
+    double? temperature,
+    int? maxTokens,
+    String? systemPromptOverride,
+    int? idleMinutes,
+    bool? backgroundProactive,
+    bool? ttsEnabled,
+    String? ttsProvider,
+    String? onlineTtsUrl,
+    String? onlineTtsKey,
+    String? onlineTtsVoice,
+    String? ttsLang,
+    double? ttsRate,
+    double? ttsPitch,
+    bool? ttsJapanese,
+  }) {
+    return AppConfig(
+      provider: provider ?? this.provider,
+      baseUrl: baseUrl ?? this.baseUrl,
+      apiKey: apiKey ?? this.apiKey,
+      model: model ?? this.model,
+      reasoningEffort: reasoningEffort ?? this.reasoningEffort,
+      temperature: temperature ?? this.temperature,
+      maxTokens: maxTokens ?? this.maxTokens,
+      systemPromptOverride:
+          systemPromptOverride ?? this.systemPromptOverride,
+      idleMinutes: idleMinutes ?? this.idleMinutes,
+      backgroundProactive: backgroundProactive ?? this.backgroundProactive,
+      ttsEnabled: ttsEnabled ?? this.ttsEnabled,
+      ttsProvider: ttsProvider ?? this.ttsProvider,
+      onlineTtsUrl: onlineTtsUrl ?? this.onlineTtsUrl,
+      onlineTtsKey: onlineTtsKey ?? this.onlineTtsKey,
+      onlineTtsVoice: onlineTtsVoice ?? this.onlineTtsVoice,
+      ttsLang: ttsLang ?? this.ttsLang,
+      ttsRate: ttsRate ?? this.ttsRate,
+      ttsPitch: ttsPitch ?? this.ttsPitch,
+      ttsJapanese: ttsJapanese ?? this.ttsJapanese,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'provider': provider,
+        'baseUrl': baseUrl,
+        'apiKey': apiKey,
+        'model': model,
+        'reasoningEffort': reasoningEffort,
+        'temperature': temperature,
+        'maxTokens': maxTokens,
+        'systemPromptOverride': systemPromptOverride,
+        'idleMinutes': idleMinutes,
+        'backgroundProactive': backgroundProactive,
+        'ttsEnabled': ttsEnabled,
+        'ttsProvider': ttsProvider,
+        'onlineTtsUrl': onlineTtsUrl,
+        'onlineTtsKey': onlineTtsKey,
+        'onlineTtsVoice': onlineTtsVoice,
+        'ttsLang': ttsLang,
+        'ttsRate': ttsRate,
+        'ttsPitch': ttsPitch,
+        'ttsJapanese': ttsJapanese,
+      };
+
+  factory AppConfig.fromJson(Map<String, dynamic> j) => AppConfig(
+        provider: j['provider'] ?? 'deepseek',
+        baseUrl: j['baseUrl'] ?? deepseekBase,
+        apiKey: j['apiKey'] ?? '',
+        model: j['model'] ?? 'deepseek-chat',
+        reasoningEffort: j['reasoningEffort'] ?? 'low',
+        temperature: (j['temperature'] as num?)?.toDouble() ?? 0.85,
+        maxTokens: (j['maxTokens'] as num?)?.toInt() ?? 800,
+        systemPromptOverride: j['systemPromptOverride'],
+        idleMinutes: (j['idleMinutes'] as num?)?.toInt() ?? 20,
+        backgroundProactive: j['backgroundProactive'] == true,
+        ttsEnabled: j['ttsEnabled'] == true,
+        ttsProvider: j['ttsProvider'] ?? 'local',
+        onlineTtsUrl: j['onlineTtsUrl'] ?? '',
+        onlineTtsKey: j['onlineTtsKey'] ?? '',
+        onlineTtsVoice: (j['onlineTtsVoice'] ?? '1').toString(),
+        ttsLang: j['ttsLang'] ?? 'ja-JP',
+        ttsRate: (j['ttsRate'] as num?)?.toDouble() ?? 0.5,
+        ttsPitch: (j['ttsPitch'] as num?)?.toDouble() ?? 1.0,
+        ttsJapanese: j['ttsJapanese'] == true,
+      );
+}
+
+class ConfigStore {
+  static const String _key = 'whale_love_config';
+  static const String _activeCharKey = 'whale_love_active_char';
+  static const String _lastActivityKey = 'whale_love_last_activity_ms';
+  static const String _operitChatIdsKey = 'whale_love_operit_chat_ids';
+
+  static Future<AppConfig> load() async {
+    final sp = await SharedPreferences.getInstance();
+    final raw = sp.getString(_key);
+    if (raw == null) return AppConfig();
+    try {
+      return AppConfig.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      return AppConfig();
+    }
+  }
+
+  static Future<void> save(AppConfig cfg) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setString(_key, jsonEncode(cfg.toJson()));
+  }
+
+  static Future<String> loadActiveCharId() async {
+    final sp = await SharedPreferences.getInstance();
+    return sp.getString(_activeCharKey) ?? 'whale_dafeiyu';
+  }
+
+  static Future<void> saveActiveCharId(String id) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setString(_activeCharKey, id);
+  }
+
+  static Future<void> saveLastActivity(DateTime t) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setInt(_lastActivityKey, t.millisecondsSinceEpoch);
+  }
+
+  static Future<int> loadLastActivityMs() async {
+    final sp = await SharedPreferences.getInstance();
+    return sp.getInt(_lastActivityKey) ?? DateTime.now().millisecondsSinceEpoch;
+  }
+
+  static String _operitBindingKey(String characterId, String operitBaseUrl) =>
+      '$characterId::$operitBaseUrl';
+
+  /// 每个角色在每个 Operit 地址上维护一个独立会话绑定。
+  static Future<String?> loadOperitChatId(
+      String characterId, String operitBaseUrl) async {
+    final sp = await SharedPreferences.getInstance();
+    final raw = sp.getString(_operitChatIdsKey);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final all = decoded.map((key, value) => MapEntry(key.toString(), value));
+      final item = all['$characterId::$operitBaseUrl'];
+      if (item is Map) {
+        final chatId = item['chatId']?.toString().trim() ?? '';
+        return chatId.isEmpty ? null : chatId;
+      }
+      // 兼容本地副本早期版本按角色保存的单个绑定。
+      final legacy = all[characterId];
+      if (legacy is Map && legacy['baseUrl']?.toString() == operitBaseUrl) {
+        final chatId = legacy['chatId']?.toString().trim() ?? '';
+        return chatId.isEmpty ? null : chatId;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> saveOperitChatId(
+      String characterId, String operitBaseUrl, String chatId) async {
+    final sp = await SharedPreferences.getInstance();
+    final all = <String, dynamic>{};
+    final raw = sp.getString(_operitChatIdsKey);
+    if (raw != null) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          all.addAll(decoded.map((key, value) => MapEntry(key.toString(), value)));
+        }
+      } catch (_) {}
+    }
+    all['$characterId::${operitBaseUrl}'] = {'chatId': chatId};
+    await sp.setString(_operitChatIdsKey, jsonEncode(all));
+  }
+
+  static Future<void> clearOperitChatId(
+      String characterId, String operitBaseUrl) async {
+    final sp = await SharedPreferences.getInstance();
+    final raw = sp.getString(_operitChatIdsKey);
+    if (raw == null) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final all = <String, dynamic>{};
+      all.addAll(decoded.map((key, value) => MapEntry(key.toString(), value)));
+      all.remove('$characterId::${operitBaseUrl}');
+      await sp.setString(_operitChatIdsKey, jsonEncode(all));
+    } catch (_) {}
+  }
+}
